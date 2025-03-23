@@ -52,9 +52,7 @@ try:
 except ImportError:
     from argparse import ArgumentParser as FlexibleArgumentParser
 
-from benchmark_dataset import (BurstGPTDataset, HuggingFaceDataset,
-                               RandomDataset, SampleRequest, ShareGPTDataset,
-                               SonnetDataset, VisionArenaDataset)
+from benchmark_dataset import HuggingFaceDataset, SampleRequest, ShareGPTDataset
 from benchmark_utils import convert_to_pytorch_benchmark_format, write_to_json
 
 MILLISECONDS_TO_SECONDS_CONVERSION = 1000
@@ -560,77 +558,31 @@ def main(args: argparse.Namespace):
                               tokenizer_mode=tokenizer_mode,
                               trust_remote_code=args.trust_remote_code)
 
-    if args.dataset_name is None:
-        raise ValueError(
-            "Please specify '--dataset-name' and the corresponding "
-            "'--dataset-path' if required.")
+    if args.dataset_name is None or args.dataset_path is None:
+        raise ValueError("Please specify '--dataset-name' and the corresponding '--dataset-path'.")
 
-    if args.dataset_name == "sonnet":
-        dataset = SonnetDataset(dataset_path=args.dataset_path)
-        # For the "sonnet" dataset, formatting depends on the backend.
-        if args.backend == "openai-chat":
-            input_requests = dataset.sample(num_requests=args.num_prompts,
-                                            input_len=args.sonnet_input_len,
-                                            output_len=args.sonnet_output_len,
-                                            prefix_len=args.sonnet_prefix_len,
-                                            tokenizer=tokenizer,
-                                            return_prompt_formatted=False)
-        else:
-            assert tokenizer.chat_template or tokenizer.default_chat_template, (
-                "Tokenizer/model must have chat template for sonnet dataset.")
-            input_requests = dataset.sample(num_requests=args.num_prompts,
-                                            input_len=args.sonnet_input_len,
-                                            output_len=args.sonnet_output_len,
-                                            prefix_len=args.sonnet_prefix_len,
-                                            tokenizer=tokenizer,
-                                            return_prompt_formatted=True)
-
-    elif args.dataset_name == "hf":
-        # Choose between VisionArenaDataset
-        # and HuggingFaceDataset based on provided parameters.
-        dataset_class = (VisionArenaDataset if args.dataset_path
-                         == VisionArenaDataset.VISION_ARENA_DATASET_PATH
-                         and args.hf_subset is None else HuggingFaceDataset)
-        input_requests = dataset_class(
+    if args.dataset_name == "hf":
+        input_requests = HuggingFaceDataset(
             dataset_path=args.dataset_path,
             dataset_subset=args.hf_subset,
             dataset_split=args.hf_split,
         ).sample(
             num_requests=args.num_prompts,
-            tokenizer=tokenizer,
+            tokenizer=tokenizer, # type: ignore
             random_seed=args.seed,
             output_len=args.hf_output_len,
         )
 
-    else:
-        # For datasets that follow a similar structure, use a mapping.
-        dataset_mapping = {
-            "sharegpt":
-            lambda: ShareGPTDataset(random_seed=args.seed,
-                                    dataset_path=args.dataset_path).sample(
-                                        tokenizer=tokenizer,
-                                        num_requests=args.num_prompts,
-                                        output_len=args.sharegpt_output_len,
-                                    ),
-            "burstgpt":
-            lambda: BurstGPTDataset(random_seed=args.seed,
-                                    dataset_path=args.dataset_path).
-            sample(tokenizer=tokenizer, num_requests=args.num_prompts),
-            "random":
-            lambda: RandomDataset(dataset_path=args.dataset_path).sample(
-                tokenizer=tokenizer,
-                num_requests=args.num_prompts,
-                prefix_len=args.random_prefix_len,
-                input_len=args.random_input_len,
-                output_len=args.random_output_len,
-                range_ratio=args.random_range_ratio,
-            )
-        }
+    elif args.dataset_name == "sharegpt":
+        input_requests = ShareGPTDataset(
+            random_seed=args.seed,
+            dataset_path=args.dataset_path
+        ).sample(
+            tokenizer=tokenizer,
+            num_requests=args.num_prompts,
+            output_len=args.sharegpt_output_len,
+        )
 
-        try:
-            input_requests = dataset_mapping[args.dataset_name]()
-        except KeyError as err:
-            raise ValueError(f"Unknown dataset: {args.dataset_name}") from err
     goodput_config_dict = check_goodput_args(args)
 
     # Avoid GC processing "static" data - reduce pause times.
@@ -717,12 +669,11 @@ def main(args: argparse.Namespace):
 
 
 if __name__ == "__main__":
-    parser = FlexibleArgumentParser(
-        description="Benchmark the online serving throughput.")
+    parser = FlexibleArgumentParser(description="Benchmark the online serving throughput.")
     parser.add_argument(
         "--backend",
         type=str,
-        default="vllm",
+        default="openai",
         choices=list(ASYNC_REQUEST_FUNCS.keys()),
     )
     parser.add_argument(
@@ -743,15 +694,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset-name",
         type=str,
-        default="sharegpt",
-        choices=["sharegpt", "burstgpt", "sonnet", "random", "hf"],
-        help="Name of the dataset to benchmark on.",
+        default="hf",
+        choices=["sharegpt", "hf"],
+        help="Type of the dataset to benchmark on.",
     )
     parser.add_argument("--dataset-path",
                         type=str,
                         default=None,
-                        help="Path to the sharegpt/sonnet dataset. "
-                        "Or the huggingface dataset ID if using HF dataset.")
+                        required=True,
+                        help="Huggingface dataset ID or path to local ShareGPT dataset")
     parser.add_argument(
         "--max-concurrency",
         type=int,
@@ -774,8 +725,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--tokenizer",
         type=str,
-        help=
-        "Name or path of the tokenizer, if not using the default tokenizer.",  # noqa: E501
+        help="Name or path of the tokenizer, if not using the default tokenizer.",  # noqa: E501
     )
     parser.add_argument("--use-beam-search", action="store_true")
     parser.add_argument(
@@ -901,29 +851,6 @@ if __name__ == "__main__":
         "goodput, refer to DistServe paper: https://arxiv.org/pdf/2401.09670 "
         "and the blog: https://hao-ai-lab.github.io/blogs/distserve")
 
-    # group for dataset specific arguments
-    sonnet_group = parser.add_argument_group("sonnet dataset options")
-    sonnet_group.add_argument(
-        "--sonnet-input-len",
-        type=int,
-        default=550,
-        help=
-        "Number of input tokens per request, used only for sonnet dataset.",
-    )
-    sonnet_group.add_argument(
-        "--sonnet-output-len",
-        type=int,
-        default=150,
-        help=
-        "Number of output tokens per request, used only for sonnet dataset.",
-    )
-    sonnet_group.add_argument(
-        "--sonnet-prefix-len",
-        type=int,
-        default=200,
-        help=
-        "Number of prefix tokens per request, used only for sonnet dataset.",
-    )
 
     sharegpt_group = parser.add_argument_group("sharegpt dataset options")
     sharegpt_group.add_argument(
@@ -932,37 +859,6 @@ if __name__ == "__main__":
         default=None,
         help="Output length for each request. Overrides the output length "
         "from the ShareGPT dataset.")
-
-    random_group = parser.add_argument_group("random dataset options")
-    random_group.add_argument(
-        "--random-input-len",
-        type=int,
-        default=1024,
-        help=
-        "Number of input tokens per request, used only for random sampling.",
-    )
-    random_group.add_argument(
-        "--random-output-len",
-        type=int,
-        default=128,
-        help=
-        "Number of output tokens per request, used only for random sampling.",
-    )
-    random_group.add_argument(
-        "--random-range-ratio",
-        type=float,
-        default=1.0,
-        help="Range of sampled ratio of input/output length, "
-        "used only for random sampling.",
-    )
-    random_group.add_argument(
-        "--random-prefix-len",
-        type=int,
-        default=0,
-        help="Number of fixed prefix tokens before random "
-        " context. The length range of context in a random "
-        " request is [random-prefix-len, "
-        " random-prefix-len + random-prefix-len * random-range-ratio).")
 
     hf_group = parser.add_argument_group("hf dataset options")
     hf_group.add_argument("--hf-subset",
