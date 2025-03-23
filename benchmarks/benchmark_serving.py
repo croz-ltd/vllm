@@ -111,14 +111,14 @@ async def get_request(
             in more bursty requests, while a higher burstiness value
             (burstiness > 1) results in a more uniform arrival of requests.
     """
-    input_requests: Iterable[SampleRequest] = iter(input_requests)
+    input_requests_iter: Iterable[SampleRequest] = iter(input_requests)
 
     # Calculate scale parameter theta to maintain the desired request_rate.
     assert burstiness > 0, (
         f"A positive burstiness factor is expected, but given {burstiness}.")
     theta = 1.0 / (request_rate * burstiness)
 
-    for request in input_requests:
+    for request in input_requests_iter:
         yield request
 
         if request_rate == float("inf"):
@@ -214,26 +214,26 @@ def calculate_metrics(
         request_goodput=good_completed / dur_s,
         output_throughput=sum(actual_output_lens) / dur_s,
         total_token_throughput=(total_input + sum(actual_output_lens)) / dur_s,
-        mean_ttft_ms=np.mean(ttfts or 0) *
+        mean_ttft_ms=float(np.mean(ttfts or 0) )*
         1000,  # ttfts is empty if streaming is not supported by backend
-        std_ttft_ms=np.std(ttfts or 0) * 1000,
-        median_ttft_ms=np.median(ttfts or 0) * 1000,
-        percentiles_ttft_ms=[(p, np.percentile(ttfts or 0, p) * 1000)
+        std_ttft_ms=float(np.std(ttfts or 0) * 1000),
+        median_ttft_ms=float(np.median(ttfts or 0) * 1000),
+        percentiles_ttft_ms=[(p, float(np.percentile(ttfts or 0, p) * 1000))
                              for p in selected_percentiles],
-        mean_tpot_ms=np.mean(tpots or 0) * 1000,
-        std_tpot_ms=np.std(tpots or 0) * 1000,
-        median_tpot_ms=np.median(tpots or 0) * 1000,
-        percentiles_tpot_ms=[(p, np.percentile(tpots or 0, p) * 1000)
+        mean_tpot_ms=float(np.mean(tpots or 0) * 1000),
+        std_tpot_ms=float(np.std(tpots or 0) * 1000),
+        median_tpot_ms=float(np.median(tpots or 0) * 1000),
+        percentiles_tpot_ms=[(p, float(np.percentile(tpots or 0, p) * 1000))
                              for p in selected_percentiles],
-        mean_itl_ms=np.mean(itls or 0) * 1000,
-        std_itl_ms=np.std(itls or 0) * 1000,
-        median_itl_ms=np.median(itls or 0) * 1000,
-        percentiles_itl_ms=[(p, np.percentile(itls or 0, p) * 1000)
+        mean_itl_ms=float(np.mean(itls or 0) * 1000),
+        std_itl_ms=float(np.std(itls or 0) * 1000),
+        median_itl_ms=float(np.median(itls or 0) * 1000),
+        percentiles_itl_ms=[(p, float(np.percentile(itls or 0, p) * 1000))
                             for p in selected_percentiles],
-        mean_e2el_ms=np.mean(e2els or 0) * 1000,
-        std_e2el_ms=np.std(e2els or 0) * 1000,
-        median_e2el_ms=np.median(e2els or 0) * 1000,
-        percentiles_e2el_ms=[(p, np.percentile(e2els or 0, p) * 1000)
+        mean_e2el_ms=float(np.mean(e2els or 0) * 1000),
+        std_e2el_ms=float(np.std(e2els or 0) * 1000),
+        median_e2el_ms=float(np.median(e2els or 0) * 1000),
+        percentiles_e2el_ms=[(p, float(np.percentile(e2els or 0, p) * 1000))
                              for p in selected_percentiles],
     )
 
@@ -258,7 +258,7 @@ async def benchmark(
     ignore_eos: bool,
     goodput_config_dict: dict[str, float],
     max_concurrency: Optional[int],
-    lora_modules: Optional[Iterable[str]],
+    lora_modules: Optional[list[str]],
 ):
     if backend in ASYNC_REQUEST_FUNCS:
         request_func = ASYNC_REQUEST_FUNCS[backend]
@@ -298,9 +298,8 @@ async def benchmark(
 
     if lora_modules:
         # For each input request, choose a LoRA module at random.
-        lora_modules = iter(
-            [random.choice(lora_modules) \
-                for _ in range(len(input_requests))])
+        lora_modules = [random.choice(lora_modules) for _ in range(len(input_requests))]
+        lora_modules_iter = iter(lora_modules)
 
     if profile:
         print("Starting profiler...")
@@ -317,10 +316,7 @@ async def benchmark(
         if profile_output.success:
             print("Profiler started")
 
-    if burstiness == 1.0:
-        distribution = "Poisson process"
-    else:
-        distribution = "Gamma distribution"
+    distribution = "Poisson process" if burstiness == 1.0 else "Gamma distribution"
 
     print(f"Traffic request rate: {request_rate}")
     print(f"Burstiness factor: {burstiness} ({distribution})")
@@ -332,8 +328,7 @@ async def benchmark(
     # and it will simplify the code in limited_request_func.
     #    semaphore = (asyncio.Semaphore(max_concurrency)
     #                 if max_concurrency else contextlib.nullcontext())
-    semaphore = (asyncio.Semaphore(max_concurrency)
-                 if max_concurrency else None)
+    semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency else None
 
     async def limited_request_func(request_func_input, pbar):
         if semaphore is None:
@@ -351,7 +346,7 @@ async def benchmark(
                 request.multi_modal_data
         req_model_id, req_model_name = model_id, model_name
         if lora_modules:
-            req_lora_module = next(lora_modules)
+            req_lora_module = next(lora_modules_iter)
             req_model_id, req_model_name = req_lora_module, req_lora_module
 
         request_func_input = RequestFuncInput(model=req_model_id,
@@ -361,7 +356,7 @@ async def benchmark(
                                               prompt_len=prompt_len,
                                               output_len=output_len,
                                               logprobs=logprobs,
-                                              multi_modal_content=mm_content,
+                                              multi_modal_content=mm_content, # type: ignore
                                               ignore_eos=ignore_eos)
         tasks.append(
             asyncio.create_task(
@@ -578,7 +573,7 @@ def main(args: argparse.Namespace):
             random_seed=args.seed,
             dataset_path=args.dataset_path
         ).sample(
-            tokenizer=tokenizer,
+            tokenizer=tokenizer, # type: ignore
             num_requests=args.num_prompts,
             output_len=args.sharegpt_output_len,
         )
@@ -596,7 +591,7 @@ def main(args: argparse.Namespace):
             base_url=base_url,
             model_id=model_id,
             model_name=model_name,
-            tokenizer=tokenizer,
+            tokenizer=tokenizer,    # type: ignore
             input_requests=input_requests,
             logprobs=args.logprobs,
             request_rate=args.request_rate,
