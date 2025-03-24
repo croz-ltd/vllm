@@ -665,39 +665,36 @@ def main(args: argparse.Namespace):
 
 if __name__ == "__main__":
     parser = FlexibleArgumentParser(description="Benchmark the online serving throughput.")
-    parser.add_argument(
-        "--backend",
-        type=str,
-        default="openai",
-        choices=list(ASYNC_REQUEST_FUNCS.keys()),
-    )
-    parser.add_argument(
-        "--base-url",
-        type=str,
-        default=None,
-        help="Server or API base url if not using http host and port.",
-    )
-    # Use 127.0.0.1 here instead of localhost to force the use of ipv4
-    parser.add_argument("--host", type=str, default="127.0.0.1")
+
+    #################### VLLM SERVER CONFIGURATION ####################
+    parser.add_argument("--backend", type=str, default="openai", choices=list(ASYNC_REQUEST_FUNCS.keys()))
+    parser.add_argument("--base-url", type=str, default=None, help="API base url if not using http host and port.")
+    parser.add_argument("--host", type=str, default="127.0.0.1")  # 127.0.0.1 instead of localhost to force IPv4
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument(
-        "--endpoint",
-        type=str,
-        default="/v1/completions",
-        help="API endpoint.",
-    )
+    parser.add_argument("--endpoint", type=str, default="/v1/completions", help="API endpoint.")
+    parser.add_argument("--model", type=str, required=True, help="Name of the model.")
+    parser.add_argument("--served-model-name", type=str, default=None, help="The model name used in the API.")
+
+    #################### DATASET CONFIGURATION ####################
     parser.add_argument(
         "--dataset-name",
         type=str,
         default="hf",
         choices=["sharegpt", "hf"],
-        help="Type of the dataset to benchmark on.",
+        help="Type of the dataset to run benchmarks with.",
     )
-    parser.add_argument("--dataset-path",
-                        type=str,
-                        default=None,
-                        required=True,
-                        help="Huggingface dataset ID or path to local ShareGPT dataset")
+    parser.add_argument(
+        "--dataset-path",
+        type=str,
+        default=None,
+        required=True,
+        help="HuggingFace dataset ID or path to local ShareGPT dataset",
+    )
+    parser.add_argument("--hf-subset", type=str, default=None, help="Subset of the HF dataset.")
+    parser.add_argument("--hf-split", type=str, default=None, help="Split of the HF dataset.")
+
+    #################### BENCHMARK PARAMETERS ####################
+    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--max-concurrency",
         type=int,
@@ -709,35 +706,13 @@ if __name__ == "__main__":
         "initiated, this argument will control how many are actually allowed "
         "to execute at a time. This means that when used in combination, the "
         "actual request rate may be lower than specified with --request-rate, "
-        "if the server is not processing requests fast enough to keep up.")
-
-    parser.add_argument(
-        "--model",
-        type=str,
-        required=True,
-        help="Name of the model.",
+        "if the server is not processing requests fast enough to keep up.",
     )
-    parser.add_argument(
-        "--tokenizer",
-        type=str,
-        help="Name or path of the tokenizer, if not using the default tokenizer.",  # noqa: E501
-    )
-    parser.add_argument("--use-beam-search", action="store_true")
     parser.add_argument(
         "--num-prompts",
         type=int,
         default=1000,
         help="Number of prompts to process.",
-    )
-    parser.add_argument(
-        "--logprobs",
-        type=int,
-        default=None,
-        help=("Number of logprobs-per-token to compute & return as part of "
-              "the request. If unspecified, then either (1) if beam search "
-              "is disabled, no logprobs are computed & a single dummy "
-              "logprob is returned for each token; or (2) if beam search "
-              "is enabled 1 logprob per token is computed"),
     )
     parser.add_argument(
         "--request-rate",
@@ -760,28 +735,10 @@ if __name__ == "__main__":
         "bursty requests. A higher burstiness value (burstiness > 1) "
         "results in a more uniform arrival of requests.",
     )
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument(
-        "--trust-remote-code",
-        action="store_true",
-        help="Trust remote code from huggingface",
-    )
-    parser.add_argument(
-        "--disable-tqdm",
-        action="store_true",
-        help="Specify to disable tqdm progress bar.",
-    )
-    parser.add_argument(
-        "--profile",
-        action="store_true",
-        help="Use Torch Profiler. The endpoint must be launched with "
-        "VLLM_TORCH_PROFILER_DIR to enable profiler.",
-    )
-    parser.add_argument(
-        "--save-result",
-        action="store_true",
-        help="Specify to save benchmark results to a json file",
-    )
+
+    #################### SCRIPT I/O CONFIGURATION ####################
+    parser.add_argument("--disable-tqdm", action="store_true", help="Specify to disable tqdm progress bar.")
+    parser.add_argument("--save-result", action="store_true", help="Specify to save benchmark results to a json file")
     parser.add_argument(
         "--save-detailed",
         action="store_true",
@@ -812,91 +769,84 @@ if __name__ == "__main__":
         "{backend}-{args.request_rate}qps-{base_model_id}-{current_dt}.json"
         " format.",
     )
-    parser.add_argument(
-        "--ignore-eos",
-        action="store_true",
-        help="Set ignore_eos flag when sending the benchmark request."
-        "Warning: ignore_eos is not supported in deepspeed_mii and tgi.")
+
+    #################### METRIC CONFIGURATION ####################
     parser.add_argument(
         "--percentile-metrics",
         type=str,
         default="ttft,tpot,itl",
         help="Comma-seperated list of selected metrics to report percentils. "
         "This argument specifies the metrics to report percentiles. "
-        "Allowed metric names are \"ttft\", \"tpot\", \"itl\", \"e2el\". "
-        "Default value is \"ttft,tpot,itl\".")
+        'Allowed metric names are "ttft", "tpot", "itl", "e2el". '
+        'Default value is "ttft,tpot,itl".',
+    )
     parser.add_argument(
         "--metric-percentiles",
         type=str,
         default="99",
         help="Comma-seperated list of percentiles for selected metrics. "
-        "To report 25-th, 50-th, and 75-th percentiles, use \"25,50,75\". "
-        "Default value is \"99\". "
-        "Use \"--percentile-metrics\" to select metrics.",
+        'To report 25-th, 50-th, and 75-th percentiles, use "25,50,75". '
+        'Default value is "99". '
+        'Use "--percentile-metrics" to select metrics.',
     )
     parser.add_argument(
         "--goodput",
         nargs="+",
         required=False,
-        help="Specify service level objectives for goodput as \"KEY:VALUE\" "
+        help='Specify service level objectives for goodput as "KEY:VALUE" '
         "pairs, where the key is a metric name, and the value is in "
-        "milliseconds. Multiple \"KEY:VALUE\" pairs can be provided, "
+        'milliseconds. Multiple "KEY:VALUE" pairs can be provided, '
         "separated by spaces. Allowed request level metric names are "
-        "\"ttft\", \"tpot\", \"e2el\". For more context on the definition of "
+        '"ttft", "tpot", "e2el". For more context on the definition of '
         "goodput, refer to DistServe paper: https://arxiv.org/pdf/2401.09670 "
-        "and the blog: https://hao-ai-lab.github.io/blogs/distserve")
-
-
-    sharegpt_group = parser.add_argument_group("sharegpt dataset options")
-    sharegpt_group.add_argument(
-        "--sharegpt-output-len",
-        type=int,
-        default=None,
-        help="Output length for each request. Overrides the output length "
-        "from the ShareGPT dataset.")
-
-    hf_group = parser.add_argument_group("hf dataset options")
-    hf_group.add_argument("--hf-subset",
-                          type=str,
-                          default=None,
-                          help="Subset of the HF dataset.")
-    hf_group.add_argument("--hf-split",
-                          type=str,
-                          default=None,
-                          help="Split of the HF dataset.")
-    hf_group.add_argument(
-        "--hf-output-len",
-        type=int,
-        default=None,
-        help="Output length for each request. Overrides the output lengths "
-        "from the sampled HF dataset.",
+        "and the blog: https://hao-ai-lab.github.io/blogs/distserve",
     )
+    
 
+    #################### RUNTIME CONFIGURATION ####################
+    parser.add_argument("--tokenizer", type=str, help="Name or path of a custom tokenizer to use.")
+    parser.add_argument("--use-beam-search", action="store_true")
+    parser.add_argument("--trust-remote-code", action="store_true", help="Trust remote code from huggingface")
     parser.add_argument(
-        '--tokenizer-mode',
+        "--logprobs",
+        type=int,
+        default=None,
+        help="Number of logprobs-per-token to compute & return as part of "
+        "the request. If unspecified, then either (1) if beam search "
+        "is disabled, no logprobs are computed & a single dummy "
+        "logprob is returned for each token; or (2) if beam search "
+        "is enabled 1 logprob per token is computed",
+    )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Use Torch Profiler. The endpoint must be launched with VLLM_TORCH_PROFILER_DIR to enable profiler.",
+    )
+    parser.add_argument(
+        "--ignore-eos",
+        action="store_true",
+        help="Set ignore_eos flag when sending the benchmark request."
+        "Warning: ignore_eos is not supported in deepspeed_mii and tgi.",
+    )
+    parser.add_argument(
+        "--lora-modules",
+        nargs="+",
+        default=None,
+        help="A subset of LoRA module names passed in when "
+        "launching the server. For each request, the "
+        "script chooses a LoRA module at random.",
+    )
+    parser.add_argument(
+        "--tokenizer-mode",
         type=str,
         default="auto",
-        choices=['auto', 'slow', 'mistral', 'custom'],
+        choices=["auto", "slow", "mistral", "custom"],
         help='The tokenizer mode.\n\n* "auto" will use the '
         'fast tokenizer if available.\n* "slow" will '
-        'always use the slow tokenizer. \n* '
+        "always use the slow tokenizer. \n* "
         '"mistral" will always use the `mistral_common` tokenizer. \n*'
-        '"custom" will use --tokenizer to select the preregistered tokenizer.')
-
-    parser.add_argument("--served-model-name",
-                        type=str,
-                        default=None,
-                        help="The model name used in the API. "
-                        "If not specified, the model name will be the "
-                        "same as the ``--model`` argument. ")
-
-    parser.add_argument("--lora-modules",
-                        nargs='+',
-                        default=None,
-                        help="A subset of LoRA module names passed in when "
-                        "launching the server. For each request, the "
-                        "script chooses a LoRA module at random.")
+        '"custom" will use --tokenizer to select the preregistered tokenizer.',
+    )
 
     args = parser.parse_args()
-
     main(args)
