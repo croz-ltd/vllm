@@ -52,7 +52,7 @@ try:
 except ImportError:
     from argparse import ArgumentParser as FlexibleArgumentParser
 
-from benchmark_dataset import HuggingFaceDataset, SampleRequest, ShareGPTDataset
+from benchmark_dataset import HuggingFaceDataset, SampleRequest, ShareGPTDataset, MIN_INPUT_TOKENS, MAX_INPUT_TOKENS
 from benchmark_utils import convert_to_pytorch_benchmark_format, write_to_json
 
 MILLISECONDS_TO_SECONDS_CONVERSION = 1000
@@ -520,7 +520,6 @@ def save_to_pytorch_benchmark_format(args: argparse.Namespace, results: dict[str
 
 
 def main(args: argparse.Namespace):
-    print(args)
     random.seed(args.seed)
     np.random.seed(args.seed)
 
@@ -544,9 +543,11 @@ def main(args: argparse.Namespace):
 
     if args.dataset_name == "hf":
         input_requests = HuggingFaceDataset(
-            dataset_path=args.dataset_path,
-            dataset_subset=args.hf_subset,
             dataset_split=args.hf_split,
+            dataset_subset=args.hf_subset,
+            min_tokens=args.min_tokens,
+            max_tokens=args.max_tokens,
+            dataset_path=args.dataset_path,
         ).sample(
             num_requests=args.num_prompts,
             tokenizer=tokenizer,  # type: ignore
@@ -555,7 +556,12 @@ def main(args: argparse.Namespace):
         )
 
     elif args.dataset_name == "sharegpt":
-        input_requests = ShareGPTDataset(random_seed=args.seed, dataset_path=args.dataset_path).sample(
+        input_requests = ShareGPTDataset(
+            min_tokens=args.min_tokens,
+            max_tokens=args.max_tokens,
+            random_seed=args.seed,
+            dataset_path=args.dataset_path,
+        ).sample(
             tokenizer=tokenizer,  # type: ignore
             num_requests=args.num_prompts,
             output_len=args.sharegpt_output_len,
@@ -710,6 +716,8 @@ if __name__ == "__main__":
         "bursty requests. A higher burstiness value (burstiness > 1) "
         "results in a more uniform arrival of requests.",
     )
+    parser.add_argument("--min-tokens", type=int, default=MIN_INPUT_TOKENS, help="Minimal number of input tokens")
+    parser.add_argument("--max-tokens", type=int, default=MAX_INPUT_TOKENS, help="Maximal number of input tokens")
 
     #################### SCRIPT I/O CONFIGURATION ####################
     parser.add_argument("--disable-tqdm", action="store_true", help="Specify to disable tqdm progress bar.")
@@ -776,7 +784,6 @@ if __name__ == "__main__":
         "goodput, refer to DistServe paper: https://arxiv.org/pdf/2401.09670 "
         "and the blog: https://hao-ai-lab.github.io/blogs/distserve",
     )
-    
 
     #################### RUNTIME CONFIGURATION ####################
     parser.add_argument("--tokenizer", type=str, help="Name or path of a custom tokenizer to use.")

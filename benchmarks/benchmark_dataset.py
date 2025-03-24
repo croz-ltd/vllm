@@ -38,6 +38,13 @@ from vllm.transformers_utils.tokenizer import AnyTokenizer, get_lora_tokenizer
 
 logger = logging.getLogger(__name__)
 
+
+# -----------------------------------------------------------------------------
+# Constants
+# -----------------------------------------------------------------------------
+MIN_INPUT_TOKENS = 4
+MAX_INPUT_TOKENS = 16384
+
 # -----------------------------------------------------------------------------
 # Data Classes
 # -----------------------------------------------------------------------------
@@ -328,8 +335,12 @@ class ShareGPTDataset(BenchmarkDataset):
     sample requests based on conversation turns.
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(
+        self, min_tokens: int = MIN_INPUT_TOKENS, max_tokens: int = MAX_INPUT_TOKENS, **kwargs
+    ) -> None:
         super().__init__(**kwargs)
+        self.min_tokens = min_tokens
+        self.max_tokens = max_tokens
         self.load_data()
 
     def load_data(self) -> None:
@@ -365,11 +376,16 @@ class ShareGPTDataset(BenchmarkDataset):
             lora_request, tokenizer = self.get_random_lora_request(
                 tokenizer=tokenizer, max_loras=max_loras, lora_path=lora_path
             )
-            prompt_ids = tokenizer(prompt).input_ids
-            completion_ids = tokenizer(completion).input_ids
-            prompt_len = len(prompt_ids)
-            new_output_len = len(completion_ids) if output_len is None else output_len
-            if not is_valid_sequence(prompt_len, new_output_len, skip_min_output_len_check=output_len is not None):
+            prompt_len = len(tokenizer(prompt).input_ids)
+            new_output_len = len(tokenizer(completion).input_ids) if output_len is None else output_len
+            if not is_valid_sequence(
+                prompt_len,
+                new_output_len,
+                min_len=self.min_tokens,
+                max_prompt_len=self.max_tokens,
+                max_total_len=(self.max_tokens + new_output_len),
+                skip_min_output_len_check=output_len is not None,
+            ):
                 continue
             if enable_multimodal_chat:
                 prompt = self.apply_multimodal_chat_transformation(prompt, None)
@@ -547,11 +563,16 @@ class HuggingFaceDataset(BenchmarkDataset):
         self,
         dataset_split: str,
         dataset_subset: Optional[str] = None,
+        min_tokens: int = MIN_INPUT_TOKENS,
+        max_tokens: int = MAX_INPUT_TOKENS,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+
         self.dataset_split = dataset_split
         self.dataset_subset = dataset_subset
+        self.min_tokens = min_tokens
+        self.max_tokens = max_tokens
 
         self.load_data()
 
@@ -592,13 +613,17 @@ class HuggingFaceDataset(BenchmarkDataset):
             conv = item["conversations"]
             prompt, completion = conv[0]["value"], conv[1]["value"]
 
-            prompt_ids = tokenizer(prompt).input_ids
-            completion_ids = tokenizer(completion).input_ids
-            prompt_len = len(prompt_ids)
-            completion_len = len(completion_ids)
+            prompt_len = len(tokenizer(prompt).input_ids)
+            completion_len = len(tokenizer(completion).input_ids)
             output_len = completion_len if dynamic_output else output_len
             assert isinstance(output_len, int) and output_len > 0
-            if dynamic_output and not is_valid_sequence(prompt_len, completion_len):
+            if dynamic_output and not is_valid_sequence(
+                prompt_len,
+                completion_len,
+                min_len=self.min_tokens,
+                max_prompt_len=self.max_tokens,
+                max_total_len=(self.max_tokens + output_len),
+            ):
                 continue
             mm_content = process_image(item["image"]) if "image" in item else None
             if enable_multimodal_chat:
