@@ -80,14 +80,12 @@ class BenchmarkDataset(ABC):
         self.dataset_path = dataset_path
         # Set the random seed, ensuring that a None value is replaced with the
         # default seed.
-        self.random_seed = (random_seed
-                            if random_seed is not None else self.DEFAULT_SEED)
+        self.random_seed = random_seed if random_seed is not None else self.DEFAULT_SEED
         self.data = None
 
     def apply_multimodal_chat_transformation(
-            self,
-            prompt: str,
-            mm_content: Optional[MultiModalDataDict] = None) -> list[dict]:
+        self, prompt: str, mm_content: Optional[MultiModalDataDict] = None
+    ) -> list[dict]:
         """
         Transform a prompt and optional multimodal content into a chat format.
         This method is used for chat models that expect a specific conversation
@@ -109,8 +107,7 @@ class BenchmarkDataset(ABC):
             NotImplementedError: If a subclass does not implement this method.
         """
         # TODO (jenniferzhao): add support for downloading data
-        raise NotImplementedError(
-            "load_data must be implemented in subclasses.")
+        raise NotImplementedError("load_data must be implemented in subclasses.")
 
     def get_random_lora_request(
         self,
@@ -156,8 +153,7 @@ class BenchmarkDataset(ABC):
         return lora_request, lora_tokenizer_cache[lora_id] or tokenizer
 
     @abstractmethod
-    def sample(self, tokenizer: PreTrainedTokenizerBase,
-               num_requests: int) -> list[SampleRequest]:
+    def sample(self, tokenizer: PreTrainedTokenizerBase, num_requests: int) -> list[SampleRequest]:
         """
         Abstract method to generate sample requests from the dataset.
 
@@ -175,8 +171,7 @@ class BenchmarkDataset(ABC):
         """
         raise NotImplementedError("sample must be implemented in subclasses.")
 
-    def maybe_oversample_requests(self, requests: list[SampleRequest],
-                                  num_requests: int) -> None:
+    def maybe_oversample_requests(self, requests: list[SampleRequest], num_requests: int) -> None:
         """
         Oversamples the list of requests if its size is less than the desired
         number.
@@ -187,11 +182,9 @@ class BenchmarkDataset(ABC):
         """
         if len(requests) < num_requests:
             random.seed(self.random_seed)
-            additional = random.choices(requests,
-                                        k=num_requests - len(requests))
+            additional = random.choices(requests, k=num_requests - len(requests))
             requests.extend(additional)
-            logger.info("Oversampled requests to reach %d total samples.",
-                        num_requests)
+            logger.info("Oversampled requests to reach %d total samples.", num_requests)
 
 
 # -----------------------------------------------------------------------------
@@ -216,14 +209,12 @@ def is_valid_sequence(
     """
     # Check for invalid conditions
     prompt_too_short = prompt_len < min_len
-    output_too_short = (not skip_min_output_len_check) and (output_len
-                                                            < min_len)
+    output_too_short = (not skip_min_output_len_check) and (output_len < min_len)
     prompt_too_long = prompt_len > max_prompt_len
     combined_too_long = (prompt_len + output_len) > max_total_len
 
     # Return True if none of the invalid conditions are met
-    return not (prompt_too_short or output_too_short or prompt_too_long
-                or combined_too_long)
+    return not (prompt_too_short or output_too_short or prompt_too_long or combined_too_long)
 
 
 @cache
@@ -258,22 +249,17 @@ def process_image(image: Any) -> Mapping[str, Any]:
         image = image.convert("RGB")
         with io.BytesIO() as image_data:
             image.save(image_data, format="JPEG")
-            image_base64 = base64.b64encode(
-                image_data.getvalue()).decode("utf-8")
+            image_base64 = base64.b64encode(image_data.getvalue()).decode("utf-8")
         return {
             "type": "image_url",
-            "image_url": {
-                "url": f"data:image/jpeg;base64,{image_base64}"
-            },
+            "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"},
         }
 
     if isinstance(image, str):
-        image_url = (image if image.startswith(
-            ("http://", "file://")) else f"file://{image}")
+        image_url = image if image.startswith(("http://", "file://")) else f"file://{image}"
         return {"type": "image_url", "image_url": {"url": image_url}}
 
-    raise ValueError(
-        f"Invalid image input {image}. Must be a PIL.Image.Image or str.")
+    raise ValueError(f"Invalid image input {image}. Must be a PIL.Image.Image or str.")
 
 
 # -----------------------------------------------------------------------------
@@ -306,24 +292,18 @@ class RandomDataset(BenchmarkDataset):
     ) -> list[SampleRequest]:
         vocab_size = tokenizer.vocab_size
 
-        prefix_token_ids = (np.random.randint(
-            0, vocab_size, size=prefix_len).tolist() if prefix_len > 0 else [])
+        prefix_token_ids = np.random.randint(0, vocab_size, size=prefix_len).tolist() if prefix_len > 0 else []
 
         input_low = int(input_len * range_ratio)
         output_low = int(output_len * range_ratio)
 
-        input_lens = np.random.randint(input_low,
-                                       input_len + 1,
-                                       size=num_requests)
-        output_lens = np.random.randint(output_low,
-                                        output_len + 1,
-                                        size=num_requests)
+        input_lens = np.random.randint(input_low, input_len + 1, size=num_requests)
+        output_lens = np.random.randint(output_low, output_len + 1, size=num_requests)
         offsets = np.random.randint(0, vocab_size, size=num_requests)
 
         requests = []
         for i in range(num_requests):
-            inner_seq = ((offsets[i] + i + np.arange(input_lens[i])) %
-                         vocab_size).tolist()
+            inner_seq = ((offsets[i] + i + np.arange(input_lens[i])) % vocab_size).tolist()
             token_sequence = prefix_token_ids + inner_seq
             prompt = tokenizer.decode(token_sequence)
             total_input_len = prefix_len + int(input_lens[i])
@@ -332,7 +312,8 @@ class RandomDataset(BenchmarkDataset):
                     prompt=prompt,
                     prompt_len=total_input_len,
                     expected_output_len=int(output_lens[i]),
-                ))
+                )
+            )
         return requests
 
 
@@ -358,10 +339,7 @@ class ShareGPTDataset(BenchmarkDataset):
         with open(self.dataset_path, encoding="utf-8") as f:
             self.data = json.load(f)
         # Filter entries with at least two conversation turns.
-        self.data = [
-            entry for entry in self.data
-            if "conversations" in entry and len(entry["conversations"]) >= 2
-        ]
+        self.data = [entry for entry in self.data if "conversations" in entry and len(entry["conversations"]) >= 2]
         random.seed(self.random_seed)
         random.shuffle(self.data)
 
@@ -385,27 +363,24 @@ class ShareGPTDataset(BenchmarkDataset):
             )
 
             lora_request, tokenizer = self.get_random_lora_request(
-                tokenizer=tokenizer, max_loras=max_loras, lora_path=lora_path)
+                tokenizer=tokenizer, max_loras=max_loras, lora_path=lora_path
+            )
             prompt_ids = tokenizer(prompt).input_ids
             completion_ids = tokenizer(completion).input_ids
             prompt_len = len(prompt_ids)
-            new_output_len = (len(completion_ids)
-                              if output_len is None else output_len)
-            if not is_valid_sequence(prompt_len,
-                                     new_output_len,
-                                     skip_min_output_len_check=output_len
-                                     is not None):
+            new_output_len = len(completion_ids) if output_len is None else output_len
+            if not is_valid_sequence(prompt_len, new_output_len, skip_min_output_len_check=output_len is not None):
                 continue
             if enable_multimodal_chat:
-                prompt = self.apply_multimodal_chat_transformation(
-                    prompt, None)
+                prompt = self.apply_multimodal_chat_transformation(prompt, None)
             samples.append(
                 SampleRequest(
                     prompt=prompt,
                     prompt_len=prompt_len,
                     expected_output_len=new_output_len,
                     lora_request=lora_request,
-                ))
+                )
+            )
         self.maybe_oversample_requests(samples, num_requests)
         return samples
 
@@ -451,20 +426,15 @@ class SonnetDataset(BenchmarkDataset):
     ) -> list:
         # Calculate average token length for a poem line.
         tokenized_lines = [tokenizer(line).input_ids for line in self.data]
-        avg_len = sum(len(tokens)
-                      for tokens in tokenized_lines) / len(tokenized_lines)
+        avg_len = sum(len(tokens) for tokens in tokenized_lines) / len(tokenized_lines)
 
         # Build the base prompt.
         base_prompt = "Pick as many lines as you can from these poem lines:\n"
         base_msg = [{"role": "user", "content": base_prompt}]
-        base_fmt = tokenizer.apply_chat_template(base_msg,
-                                                 add_generation_prompt=True,
-                                                 tokenize=False)
+        base_fmt = tokenizer.apply_chat_template(base_msg, add_generation_prompt=True, tokenize=False)
         base_offset = len(tokenizer(base_fmt).input_ids)
         if input_len <= base_offset:
-            raise ValueError(
-                f"'input_len' must be higher than the base prompt length "
-                f"({base_offset}).")
+            raise ValueError(f"'input_len' must be higher than the base prompt length ({base_offset}).")
 
         # Determine how many poem lines to use.
         num_input_lines = round((input_len - base_offset) / avg_len)
@@ -473,20 +443,18 @@ class SonnetDataset(BenchmarkDataset):
 
         samples = []
         for _ in range(num_requests):
-            extra_lines = random.choices(self.data,
-                                         k=num_input_lines - num_prefix_lines)
+            extra_lines = random.choices(self.data, k=num_input_lines - num_prefix_lines)
             prompt = f"{base_prompt}{''.join(prefix_lines + extra_lines)}"
             msg = [{"role": "user", "content": prompt}]
-            prompt_formatted = tokenizer.apply_chat_template(
-                msg, add_generation_prompt=True, tokenize=False)
+            prompt_formatted = tokenizer.apply_chat_template(msg, add_generation_prompt=True, tokenize=False)
             prompt_len = len(tokenizer(prompt_formatted).input_ids)
             samples.append(
                 SampleRequest(
-                    prompt=prompt_formatted
-                    if return_prompt_formatted else prompt,
+                    prompt=prompt_formatted if return_prompt_formatted else prompt,
                     prompt_len=prompt_len,
                     expected_output_len=output_len,
-                ))
+                )
+            )
         return samples
 
 
@@ -506,7 +474,9 @@ class BurstGPTDataset(BenchmarkDataset):
         super().__init__(**kwargs)
         self.load_data()
 
-    def load_data(self, ):
+    def load_data(
+        self,
+    ):
         if self.dataset_path is None:
             raise ValueError("dataset_path must be provided for loading data.")
 
@@ -520,8 +490,7 @@ class BurstGPTDataset(BenchmarkDataset):
 
     def _sample_loaded_data(self, num_requests: int) -> list:
         if num_requests <= len(self.data):
-            data = self.data.sample(n=num_requests,
-                                    random_state=self.random_seed)
+            data = self.data.sample(n=num_requests, random_state=self.random_seed)
         else:
             data = self.data.sample(
                 n=num_requests,
@@ -545,7 +514,8 @@ class BurstGPTDataset(BenchmarkDataset):
             input_len = int(data[i][2])
             output_len = int(data[i][3])
             lora_req, tokenizer = self.get_random_lora_request(
-                tokenizer=tokenizer, max_loras=max_loras, lora_path=lora_path)
+                tokenizer=tokenizer, max_loras=max_loras, lora_path=lora_path
+            )
             vocab_size = tokenizer.vocab_size
             # Generate a synthetic prompt: a list of token IDs computed as (i +
             # j) modulo vocab_size.
@@ -557,7 +527,8 @@ class BurstGPTDataset(BenchmarkDataset):
                     prompt_len=input_len,
                     expected_output_len=output_len,
                     lora_request=lora_req,
-                ))
+                )
+            )
         return samples
 
 
@@ -594,23 +565,24 @@ class HuggingFaceDataset(BenchmarkDataset):
             split=self.dataset_split,
             streaming=True,
         )
-        if self.data.features is None or "conversations" \
-            not in self.data.features:
+        if self.data.features is None or "conversations" not in self.data.features:
             raise ValueError(
                 "HuggingFaceDataset currently only supports datasets with "
                 "a 'conversations' column like lmms-lab/LLaVA-OneVision-Data. "
                 "Please consider contributing if you would like to add "
-                "support for additional dataset formats.")
+                "support for additional dataset formats."
+            )
         # Shuffle and filter examples with at least 2 conversations.
-        self.data = self.data.shuffle(seed=self.random_seed).filter(
-            lambda x: len(x["conversations"]) >= 2)
+        self.data = self.data.shuffle(seed=self.random_seed).filter(lambda x: len(x["conversations"]) >= 2)
 
-    def sample(self,
-               tokenizer: PreTrainedTokenizerBase,
-               num_requests: int,
-               output_len: Optional[int] = None,
-               enable_multimodal_chat: bool = False,
-               **kwargs) -> list:
+    def sample(
+        self,
+        tokenizer: PreTrainedTokenizerBase,
+        num_requests: int,
+        output_len: Optional[int] = None,
+        enable_multimodal_chat: bool = False,
+        **kwargs,
+    ) -> list:
         sampled_requests = []
         dynamic_output = output_len is None
 
@@ -626,24 +598,22 @@ class HuggingFaceDataset(BenchmarkDataset):
             completion_len = len(completion_ids)
             output_len = completion_len if dynamic_output else output_len
             assert isinstance(output_len, int) and output_len > 0
-            if dynamic_output and not is_valid_sequence(
-                    prompt_len, completion_len):
+            if dynamic_output and not is_valid_sequence(prompt_len, completion_len):
                 continue
-            mm_content = process_image(
-                item["image"]) if "image" in item else None
+            mm_content = process_image(item["image"]) if "image" in item else None
             if enable_multimodal_chat:
                 # Note: when chat is enabled the request prompt_len is no longer
                 # accurate and we will be using request output to count the
                 # actual prompt len and output len
-                prompt = self.apply_multimodal_chat_transformation(
-                    prompt, mm_content)
+                prompt = self.apply_multimodal_chat_transformation(prompt, mm_content)
             sampled_requests.append(
                 SampleRequest(
                     prompt=prompt,
                     prompt_len=prompt_len,
                     expected_output_len=output_len,
                     multi_modal_data=mm_content,
-                ))
+                )
+            )
         self.maybe_oversample_requests(sampled_requests, num_requests)
         return sampled_requests
 
@@ -667,8 +637,10 @@ class VisionArenaDataset(HuggingFaceDataset):
     ) -> None:
         super().__init__(**kwargs)
         if self.dataset_path != self.VISION_ARENA_DATASET_PATH:
-            raise ValueError(f"Only support Vision Arena dataset.\
-                    This data path {self.dataset_path} is not valid.")
+            raise ValueError(
+                f"Only support Vision Arena dataset.\
+                    This data path {self.dataset_path} is not valid."
+            )
         if self.dataset_subset is None and self.dataset_split != "train":
             raise ValueError("Dataset split must be 'train'.")
 
@@ -691,8 +663,7 @@ class VisionArenaDataset(HuggingFaceDataset):
         enable_multimodal_chat: bool = False,
         **kwargs,
     ) -> list:
-        output_len = (output_len
-                      if output_len is not None else self.DEFAULT_OUTPUT_LEN)
+        output_len = output_len if output_len is not None else self.DEFAULT_OUTPUT_LEN
         sampled_requests = []
         for item in self.data:
             if len(sampled_requests) >= num_requests:
@@ -704,14 +675,14 @@ class VisionArenaDataset(HuggingFaceDataset):
                 # Note: when chat is enabled the request prompt_len is no longer
                 # accurate and we will be using request output to count the
                 # actual prompt len
-                prompt = self.apply_multimodal_chat_transformation(
-                    prompt, mm_content)
+                prompt = self.apply_multimodal_chat_transformation(prompt, mm_content)
             sampled_requests.append(
                 SampleRequest(
                     prompt=prompt,
                     prompt_len=prompt_len,
                     expected_output_len=output_len,
                     multi_modal_data=mm_content,
-                ))
+                )
+            )
         self.maybe_oversample_requests(sampled_requests, num_requests)
         return sampled_requests
