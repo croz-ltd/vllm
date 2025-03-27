@@ -519,25 +519,7 @@ def save_to_pytorch_benchmark_format(args: argparse.Namespace, results: dict[str
         write_to_json(pt_file, pt_records)
 
 
-def main(args: argparse.Namespace):
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-
-    backend = args.backend
-    model_id = args.model
-    model_name = args.served_model_name
-    tokenizer_id = args.tokenizer if args.tokenizer is not None else args.model
-    tokenizer_mode = args.tokenizer_mode
-
-    if args.base_url is not None:
-        api_url = f"{args.base_url}{args.endpoint}"
-        base_url = f"{args.base_url}"
-    else:
-        api_url = f"http://{args.host}:{args.port}{args.endpoint}"
-        base_url = f"http://{args.host}:{args.port}"
-
-    tokenizer = get_tokenizer(tokenizer_id, tokenizer_mode=tokenizer_mode, trust_remote_code=args.trust_remote_code)
-
+def get_input_requests(args: argparse.Namespace, tokenizer: PreTrainedTokenizerBase) -> list[SampleRequest]:
     if args.dataset_name is None or args.dataset_path is None:
         raise ValueError("Please specify '--dataset-name' and the corresponding '--dataset-path'.")
 
@@ -568,6 +550,75 @@ def main(args: argparse.Namespace):
             output_len=args.sharegpt_output_len,
         )
 
+    return input_requests
+
+
+def save_result(args: argparse.Namespace, benchmark_result: dict[str, Any]):
+    result_json: dict[str, Any] = {}
+
+    # Setup
+    current_dt = datetime.now().strftime("%Y%m%d-%H%M%S")
+    result_json["date"] = current_dt
+    result_json["backend"] = args.backend
+    result_json["model_id"] = args.model
+    result_json["tokenizer_id"] = args.tokenizer
+    result_json["num_prompts"] = args.num_prompts
+
+    # Metadata
+    if args.metadata:
+        for item in args.metadata:
+            if "=" in item:
+                kvstring = item.split("=")
+                result_json[kvstring[0].strip()] = kvstring[1].strip()
+            else:
+                raise ValueError("Invalid metadata format. Please use KEY=VALUE format.")
+
+    if not args.save_detailed:
+        # Remove fields with too many data points
+        for field in ["input_lens", "output_lens", "ttfts", "itls", "generated_texts", "errors"]:
+            if field in result_json:
+                del result_json[field]
+
+    # Traffic
+    result_json["request_rate"] = args.request_rate if args.request_rate < float("inf") else "inf"
+    result_json["burstiness"] = args.burstiness
+    result_json["max_concurrency"] = args.max_concurrency
+
+    # Merge with benchmark result
+    result_json = {**result_json, **benchmark_result}
+
+    # Save to file
+    base_model_id = args.model.split("/")[-1]
+    max_concurrency_str = f"-concurrency{args.max_concurrency}" if args.max_concurrency is not None else ""
+    file_name = f"{args.backend}-{args.request_rate}qps{max_concurrency_str}-{base_model_id}-{current_dt}.json"  # noqa
+    if args.result_filename:
+        file_name = args.result_filename
+    if args.result_dir:
+        file_name = os.path.join(args.result_dir, file_name)
+    with open(file_name, "w", encoding="utf-8") as outfile:
+        json.dump(result_json, outfile)
+    save_to_pytorch_benchmark_format(args, result_json, file_name)
+
+
+def main(args: argparse.Namespace):
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+
+    backend = args.backend
+    model_id = args.model
+    model_name = args.served_model_name
+    tokenizer_id = args.tokenizer if args.tokenizer is not None else args.model
+    tokenizer_mode = args.tokenizer_mode
+
+    if args.base_url is not None:
+        api_url = f"{args.base_url}{args.endpoint}"
+        base_url = f"{args.base_url}"
+    else:
+        api_url = f"http://{args.host}:{args.port}{args.endpoint}"
+        base_url = f"http://{args.host}:{args.port}"
+
+    tokenizer = get_tokenizer(tokenizer_id, tokenizer_mode=tokenizer_mode, trust_remote_code=args.trust_remote_code)
+    input_requests = get_input_requests(args, tokenizer)
     goodput_config_dict = check_goodput_args(args)
 
     # Avoid GC processing "static" data - reduce pause times.
@@ -599,50 +650,7 @@ def main(args: argparse.Namespace):
 
     # Save config and results to json
     if args.save_result:
-        result_json: dict[str, Any] = {}
-
-        # Setup
-        current_dt = datetime.now().strftime("%Y%m%d-%H%M%S")
-        result_json["date"] = current_dt
-        result_json["backend"] = backend
-        result_json["model_id"] = model_id
-        result_json["tokenizer_id"] = tokenizer_id
-        result_json["num_prompts"] = args.num_prompts
-
-        # Metadata
-        if args.metadata:
-            for item in args.metadata:
-                if "=" in item:
-                    kvstring = item.split("=")
-                    result_json[kvstring[0].strip()] = kvstring[1].strip()
-                else:
-                    raise ValueError("Invalid metadata format. Please use KEY=VALUE format.")
-
-        if not args.save_detailed:
-            # Remove fields with too many data points
-            for field in ["input_lens", "output_lens", "ttfts", "itls", "generated_texts", "errors"]:
-                if field in result_json:
-                    del result_json[field]
-
-        # Traffic
-        result_json["request_rate"] = args.request_rate if args.request_rate < float("inf") else "inf"
-        result_json["burstiness"] = args.burstiness
-        result_json["max_concurrency"] = args.max_concurrency
-
-        # Merge with benchmark result
-        result_json = {**result_json, **benchmark_result}
-
-        # Save to file
-        base_model_id = model_id.split("/")[-1]
-        max_concurrency_str = f"-concurrency{args.max_concurrency}" if args.max_concurrency is not None else ""
-        file_name = f"{backend}-{args.request_rate}qps{max_concurrency_str}-{base_model_id}-{current_dt}.json"  # noqa
-        if args.result_filename:
-            file_name = args.result_filename
-        if args.result_dir:
-            file_name = os.path.join(args.result_dir, file_name)
-        with open(file_name, "w", encoding="utf-8") as outfile:
-            json.dump(result_json, outfile)
-        save_to_pytorch_benchmark_format(args, result_json, file_name)
+        save_result(args, benchmark_result)
 
 
 if __name__ == "__main__":
