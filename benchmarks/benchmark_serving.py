@@ -541,16 +541,17 @@ def main(args: argparse.Namespace):
     if args.dataset_name is None or args.dataset_path is None:
         raise ValueError("Please specify '--dataset-name' and the corresponding '--dataset-path'.")
 
-    if args.dataset_name == "hf":
+    if args.dataset_name in ["hf", "croz"]:
         input_requests = HuggingFaceDataset(
-            dataset_split=args.hf_split,
-            dataset_subset=args.hf_subset,
             min_tokens=args.min_tokens,
             max_tokens=args.max_tokens,
+            dataset_split=args.hf_split,
+            dataset_subset=args.hf_subset,
             dataset_path=args.dataset_path,
         ).sample(
             num_requests=args.num_prompts,
             tokenizer=tokenizer,  # type: ignore
+            is_croz_dataset=(args.dataset_name == "croz"),
             random_seed=args.seed,
             output_len=args.hf_output_len,
         )
@@ -660,8 +661,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset-name",
         type=str,
-        default="hf",
-        choices=["sharegpt", "hf"],
+        default="croz",
+        choices=["sharegpt", "hf", "croz"],
         help="Type of the dataset to run benchmarks with.",
     )
     parser.add_argument(

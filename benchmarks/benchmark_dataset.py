@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 # Constants
 # -----------------------------------------------------------------------------
 MIN_INPUT_TOKENS = 4
-MAX_INPUT_TOKENS = 16384
+MAX_INPUT_TOKENS = 16200
 
 # -----------------------------------------------------------------------------
 # Data Classes
@@ -200,9 +200,9 @@ class BenchmarkDataset(ABC):
 def is_valid_sequence(
     prompt_len: int,
     output_len: int,
-    min_len: int = 4,
-    max_prompt_len: int = 1024,
-    max_total_len: int = 2048,
+    min_len: int,
+    max_prompt_len: int,
+    max_total_len: int,
     skip_min_output_len_check: bool = False,
 ) -> bool:
     """
@@ -279,7 +279,7 @@ class ShareGPTDataset(BenchmarkDataset):
     """
 
     def __init__(
-        self, min_tokens: int = MIN_INPUT_TOKENS, max_tokens: int = MAX_INPUT_TOKENS, **kwargs
+        self, min_tokens: int, max_tokens: int, **kwargs
     ) -> None:
         super().__init__(**kwargs)
         self.min_tokens = min_tokens
@@ -345,7 +345,7 @@ class ShareGPTDataset(BenchmarkDataset):
 
 
 # -----------------------------------------------------------------------------
-# HuggingFace Dataset Implementation
+# HuggingFace/CROZ Dataset Implementation
 # -----------------------------------------------------------------------------
 
 
@@ -357,10 +357,10 @@ class HuggingFaceDataset(BenchmarkDataset):
 
     def __init__(
         self,
+        min_tokens: int,
+        max_tokens: int,
         dataset_split: str,
         dataset_subset: Optional[str] = None,
-        min_tokens: int = MIN_INPUT_TOKENS,
-        max_tokens: int = MAX_INPUT_TOKENS,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -396,6 +396,7 @@ class HuggingFaceDataset(BenchmarkDataset):
         self,
         tokenizer: PreTrainedTokenizerBase,
         num_requests: int,
+        is_croz_dataset: bool,
         output_len: Optional[int] = None,
         enable_multimodal_chat: bool = False,
         **kwargs,
@@ -406,13 +407,20 @@ class HuggingFaceDataset(BenchmarkDataset):
         for item in self.data:
             if len(sampled_requests) >= num_requests:
                 break
+
             conv = item["conversations"]
             prompt, completion = conv[0]["value"], conv[1]["value"]
 
-            prompt_len = len(tokenizer(prompt).input_ids)
-            completion_len = len(tokenizer(completion).input_ids)
+            if is_croz_dataset:
+                prompt_len = int(conv[0]["token_count"])
+                completion_len = int(conv[1]["token_count"])
+            else:
+                prompt_len = len(tokenizer(prompt).input_ids)
+                completion_len = len(tokenizer(completion).input_ids)
+
             output_len = completion_len if dynamic_output else output_len
             assert isinstance(output_len, int) and output_len > 0
+
             if dynamic_output and not is_valid_sequence(
                 prompt_len,
                 completion_len,
