@@ -397,13 +397,10 @@ class HuggingFaceDataset(BenchmarkDataset):
         tokenizer: PreTrainedTokenizerBase,
         num_requests: int,
         is_croz_dataset: bool,
-        output_len: Optional[int] = None,
         enable_multimodal_chat: bool = False,
         **kwargs,
     ) -> list:
         sampled_requests = []
-        dynamic_output = output_len is None
-
         for item in self.data:
             if len(sampled_requests) >= num_requests:
                 break
@@ -413,22 +410,17 @@ class HuggingFaceDataset(BenchmarkDataset):
 
             if is_croz_dataset:
                 prompt_len = int(conv[0]["token_count"])
-                completion_len = int(conv[1]["token_count"])
+                output_len = int(conv[1]["token_count"])
             else:
                 prompt_len = len(tokenizer(prompt).input_ids)
-                completion_len = len(tokenizer(completion).input_ids)
+                output_len = len(tokenizer(completion).input_ids)
 
-            output_len = completion_len if dynamic_output else output_len
             assert isinstance(output_len, int) and output_len > 0
 
-            if dynamic_output and not is_valid_sequence(
-                prompt_len,
-                completion_len,
-                min_len=self.min_tokens,
-                max_prompt_len=self.max_tokens,
-                max_total_len=(self.max_tokens + output_len),
-            ):
+            max_total_len = self.max_tokens + output_len
+            if not is_valid_sequence(prompt_len, output_len, self.min_tokens, self.max_tokens, max_total_len):
                 continue
+            
             mm_content = process_image(item["image"]) if "image" in item else None
             if enable_multimodal_chat:
                 # Note: when chat is enabled the request prompt_len is no longer

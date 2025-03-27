@@ -535,7 +535,6 @@ def get_input_requests(args: argparse.Namespace, tokenizer: PreTrainedTokenizerB
             tokenizer=tokenizer,  # type: ignore
             is_croz_dataset=(args.dataset_name == "croz"),
             random_seed=args.seed,
-            output_len=args.hf_output_len,
         )
 
     elif args.dataset_name == "sharegpt":
