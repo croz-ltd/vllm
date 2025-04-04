@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 MIN_INPUT_TOKENS = 4
 MAX_INPUT_TOKENS = 16200
+MAX_OUTPUT_TOKENS = -1
 
 # -----------------------------------------------------------------------------
 # Data Classes
@@ -202,7 +203,7 @@ def is_valid_sequence(
     output_len: int,
     min_len: int,
     max_prompt_len: int,
-    max_total_len: int,
+    max_output_len: int,
     skip_min_output_len_check: bool = False,
 ) -> bool:
     """
@@ -216,10 +217,10 @@ def is_valid_sequence(
     prompt_too_short = prompt_len < min_len
     output_too_short = (not skip_min_output_len_check) and (output_len < min_len)
     prompt_too_long = prompt_len > max_prompt_len
-    combined_too_long = (prompt_len + output_len) > max_total_len
+    output_too_long = (max_output_len > 0) and (output_len > max_output_len)
 
     # Return True if none of the invalid conditions are met
-    return not (prompt_too_short or output_too_short or prompt_too_long or combined_too_long)
+    return not (prompt_too_short or output_too_short or prompt_too_long or output_too_long)
 
 
 @cache
@@ -278,12 +279,11 @@ class ShareGPTDataset(BenchmarkDataset):
     sample requests based on conversation turns.
     """
 
-    def __init__(
-        self, min_tokens: int, max_tokens: int, **kwargs
-    ) -> None:
+    def __init__(self, min_tokens: int, max_tokens: int, max_output: int, **kwargs) -> None:
         super().__init__(**kwargs)
         self.min_tokens = min_tokens
         self.max_tokens = max_tokens
+        self.max_output = max_output
         self.load_data()
 
     def load_data(self) -> None:
@@ -326,7 +326,7 @@ class ShareGPTDataset(BenchmarkDataset):
                 new_output_len,
                 min_len=self.min_tokens,
                 max_prompt_len=self.max_tokens,
-                max_total_len=(self.max_tokens + new_output_len),
+                max_output_len=self.max_output,
                 skip_min_output_len_check=output_len is not None,
             ):
                 continue
@@ -359,6 +359,7 @@ class HuggingFaceDataset(BenchmarkDataset):
         self,
         min_tokens: int,
         max_tokens: int,
+        max_output: int,
         dataset_split: str,
         dataset_subset: Optional[str] = None,
         **kwargs,
@@ -369,6 +370,7 @@ class HuggingFaceDataset(BenchmarkDataset):
         self.dataset_subset = dataset_subset
         self.min_tokens = min_tokens
         self.max_tokens = max_tokens
+        self.max_output = max_output
 
         self.load_data()
 
@@ -417,10 +419,11 @@ class HuggingFaceDataset(BenchmarkDataset):
 
             assert isinstance(output_len, int) and output_len > 0
 
-            max_total_len = self.max_tokens + output_len
-            if not is_valid_sequence(prompt_len, output_len, self.min_tokens, self.max_tokens, max_total_len):
+            if not is_valid_sequence(
+                prompt_len, output_len, self.min_tokens, self.max_tokens, self.max_output
+            ):
                 continue
-            
+
             mm_content = process_image(item["image"]) if "image" in item else None
             if enable_multimodal_chat:
                 # Note: when chat is enabled the request prompt_len is no longer

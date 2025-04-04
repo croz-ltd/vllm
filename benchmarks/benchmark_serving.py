@@ -52,7 +52,14 @@ try:
 except ImportError:
     from argparse import ArgumentParser as FlexibleArgumentParser
 
-from benchmark_dataset import HuggingFaceDataset, SampleRequest, ShareGPTDataset, MIN_INPUT_TOKENS, MAX_INPUT_TOKENS
+from benchmark_dataset import (
+    HuggingFaceDataset,
+    SampleRequest,
+    ShareGPTDataset,
+    MIN_INPUT_TOKENS,
+    MAX_INPUT_TOKENS,
+    MAX_OUTPUT_TOKENS,
+)
 from benchmark_utils import convert_to_pytorch_benchmark_format, write_to_json
 
 MILLISECONDS_TO_SECONDS_CONVERSION = 1000
@@ -527,6 +534,7 @@ def get_input_requests(args: argparse.Namespace, tokenizer: PreTrainedTokenizerB
         input_requests = HuggingFaceDataset(
             min_tokens=args.min_tokens,
             max_tokens=args.max_tokens,
+            max_output=args.max_output,
             dataset_split=args.hf_split,
             dataset_subset=args.hf_subset,
             dataset_path=args.dataset_path,
@@ -541,6 +549,7 @@ def get_input_requests(args: argparse.Namespace, tokenizer: PreTrainedTokenizerB
         input_requests = ShareGPTDataset(
             min_tokens=args.min_tokens,
             max_tokens=args.max_tokens,
+            max_output=args.max_output,
             random_seed=args.seed,
             dataset_path=args.dataset_path,
         ).sample(
@@ -726,6 +735,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--min-tokens", type=int, default=MIN_INPUT_TOKENS, help="Minimal number of input tokens")
     parser.add_argument("--max-tokens", type=int, default=MAX_INPUT_TOKENS, help="Maximal number of input tokens")
+    parser.add_argument("--max-output", type=int, default=MAX_OUTPUT_TOKENS, help="Maximal number of output tokens")
 
     #################### SCRIPT I/O CONFIGURATION ####################
     parser.add_argument("--disable-tqdm", action="store_true", help="Specify to disable tqdm progress bar.")
