@@ -305,6 +305,8 @@ class ShareGPTDataset(BenchmarkDataset):
         max_loras: Optional[int] = None,
         output_len: Optional[int] = None,
         enable_multimodal_chat: bool = False,
+        repeat_prompt: int = 1,
+        shuffle_sample: bool = False,
         **kwargs,
     ) -> list:
         samples: list = []
@@ -332,15 +334,21 @@ class ShareGPTDataset(BenchmarkDataset):
                 continue
             if enable_multimodal_chat:
                 prompt = self.apply_multimodal_chat_transformation(prompt, None)
-            samples.append(
-                SampleRequest(
-                    prompt=prompt,
-                    prompt_len=prompt_len,
-                    expected_output_len=new_output_len,
-                    lora_request=lora_request,
+
+            for i in range(repeat_prompt):
+                samples.append(
+                    SampleRequest(
+                        prompt=prompt,
+                        prompt_len=prompt_len,
+                        expected_output_len=new_output_len,
+                        lora_request=lora_request,
+                    )
                 )
-            )
+
         self.maybe_oversample_requests(samples, num_requests)
+
+        if shuffle_sample:
+            random.shuffle(samples)
         return samples
 
 
@@ -400,6 +408,8 @@ class HuggingFaceDataset(BenchmarkDataset):
         num_requests: int,
         is_croz_dataset: bool,
         enable_multimodal_chat: bool = False,
+        repeat_prompt: int = 1,
+        shuffle_sample: bool = False,
         **kwargs,
     ) -> list:
         sampled_requests = []
@@ -430,13 +440,18 @@ class HuggingFaceDataset(BenchmarkDataset):
                 # accurate and we will be using request output to count the
                 # actual prompt len and output len
                 prompt = self.apply_multimodal_chat_transformation(prompt, mm_content)
-            sampled_requests.append(
-                SampleRequest(
-                    prompt=prompt,
-                    prompt_len=prompt_len,
-                    expected_output_len=output_len,
-                    multi_modal_data=mm_content,
+
+            for i in range(repeat_prompt):
+                sampled_requests.append(
+                    SampleRequest(
+                        prompt=prompt,
+                        prompt_len=prompt_len,
+                        expected_output_len=output_len,
+                        multi_modal_data=mm_content,
+                    )
                 )
-            )
         self.maybe_oversample_requests(sampled_requests, num_requests)
+        
+        if shuffle_sample:
+            random.shuffle(sampled_requests)
         return sampled_requests

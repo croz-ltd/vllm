@@ -543,6 +543,8 @@ def get_input_requests(args: argparse.Namespace, tokenizer: PreTrainedTokenizerB
             tokenizer=tokenizer,  # type: ignore
             is_croz_dataset=(args.dataset_name == "croz"),
             random_seed=args.seed,
+            repeat_prompt=args.repeat_prompt,
+            shuffle_sample=args.shuffle_sample
         )
 
     elif args.dataset_name == "sharegpt":
@@ -556,6 +558,8 @@ def get_input_requests(args: argparse.Namespace, tokenizer: PreTrainedTokenizerB
             tokenizer=tokenizer,  # type: ignore
             num_requests=args.num_prompts,
             output_len=args.sharegpt_output_len,
+            repeat_prompt=args.repeat_prompt,
+            shuffle_sample=args.shuffle_sample
         )
 
     return input_requests
@@ -736,6 +740,8 @@ if __name__ == "__main__":
     parser.add_argument("--min-tokens", type=int, default=MIN_INPUT_TOKENS, help="Minimal number of input tokens")
     parser.add_argument("--max-tokens", type=int, default=MAX_INPUT_TOKENS, help="Maximal number of input tokens")
     parser.add_argument("--max-output", type=int, default=MAX_OUTPUT_TOKENS, help="Maximal number of output tokens")
+    parser.add_argument("--repeat-prompt", type=int, default=1, help="How many times to repeat each prompt")
+    parser.add_argument("--shuffle-sample", action="store_true", help="Whether to shuffle dataset after sampling")
 
     #################### SCRIPT I/O CONFIGURATION ####################
     parser.add_argument("--disable-tqdm", action="store_true", help="Specify to disable tqdm progress bar.")
