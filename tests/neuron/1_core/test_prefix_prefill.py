@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from typing import Optional
 
 import pytest
 import torch
 import torch.nn.functional as F
+
+from vllm.utils import cdiv
 
 
 class BlockDiagonalCausalFromBottomRightMask:
@@ -258,13 +261,13 @@ def sample_inputs(
                              value[start_loc:end_loc])
             cur_ctx += block_size
             block_id += 1
+    kv_cache = torch.stack([k_cache, v_cache])
 
     return (
         query,
         k,
         v,
-        k_cache,
-        v_cache,
+        kv_cache,
         block_table,
         key,
         value,
@@ -361,8 +364,7 @@ def test_contexted_kv_attention(
             query,
             k_active,
             v_active,
-            k_cache,
-            v_cache,
+            kv_cache,
             block_table,
             key,
             value,
@@ -398,11 +400,8 @@ def test_contexted_kv_attention(
         assert (large_tile_size >= B_P_SIZE
                 ), f"Expect {large_tile_size=} to be larger than {B_P_SIZE=}"
 
-        def ceil_div(a, b):
-            return (a + b - 1) // b
-
         def pad_to_multiple(a, b):
-            return ceil_div(a, b) * b
+            return cdiv(a, b) * b
 
         def pad_to_next_power_of_2(a):
             assert a > 0
@@ -411,7 +410,7 @@ def test_contexted_kv_attention(
         # calculate input shapes
         max_num_queries = pad_to_next_power_of_2(sum(query_lens))
         context_lens = torch.tensor(seq_lens) - torch.tensor(query_lens)
-        num_active_blocks = ceil_div(context_lens, block_size).sum().item()
+        num_active_blocks = cdiv(context_lens, block_size).sum().item()
         num_active_blocks = pad_to_multiple(num_active_blocks,
                                             large_tile_size // block_size)
         context_kv_len = num_active_blocks * block_size
@@ -439,8 +438,7 @@ def test_contexted_kv_attention(
         query = query.unsqueeze(0).permute(0, 2, 3, 1).contiguous()
         k = k.unsqueeze(0).permute(0, 2, 3, 1).contiguous()
         v = v.unsqueeze(0).permute(0, 2, 1, 3).contiguous()
-        k_cache = k_cache.permute(0, 2, 1, 3).contiguous()
-        v_cache = v_cache.permute(0, 2, 1, 3).contiguous()
+        kv_cache = kv_cache.permute(0, 1, 3, 2, 4).contiguous()
 
         # transform block table
         active_block_table = get_active_block_tables(
@@ -487,8 +485,7 @@ def test_contexted_kv_attention(
             query.to(device=device),
             k.to(device=device),
             v.to(device=device),
-            k_cache.to(device=device),
-            v_cache.to(device=device),
+            kv_cache.to(device=device),
             active_block_table.to(device=device),
             attn_mask.to(device=device),
         )

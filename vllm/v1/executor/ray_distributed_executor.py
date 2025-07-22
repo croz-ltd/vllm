@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from concurrent.futures import Future
 from typing import Union
@@ -32,6 +33,8 @@ class RayDistributedExecutor(RayDistributedExecutorV0, Executor):
         """Ray distributed executor supports pipeline parallelism,
         meaning that it allows PP size batches to be executed concurrently.
         """
+        if self.scheduler_config.async_scheduling:
+            return 2
         return self.parallel_config.pipeline_parallel_size
 
     def execute_model(

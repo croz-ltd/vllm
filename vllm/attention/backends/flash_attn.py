@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """Attention layer with FlashAttention."""
 from collections import defaultdict
 from dataclasses import dataclass
@@ -22,7 +23,8 @@ from vllm.attention.backends.utils import (
     compute_slot_mapping_start_idx, get_num_prefill_decode_query_kv_tokens,
     get_seq_len_block_table_args, is_all_cross_attn_metadata_set,
     is_all_encoder_attn_metadata_set, is_block_tables_empty)
-from vllm.fa_utils import get_flash_attn_version
+from vllm.attention.utils.fa_utils import (flash_attn_supports_fp8,
+                                           get_flash_attn_version)
 from vllm.logger import init_logger
 from vllm.multimodal import MultiModalPlaceholderMap
 from vllm.utils import async_tensor_h2d, make_tensor_with_pad
@@ -325,7 +327,7 @@ class FlashAttentionMetadata(AttentionMetadata):
             assert self.use_cuda_graph
 
         if turn_prefills_into_decodes:
-            # When Mutli-Step is enabled with Chunked-Prefill, prefills and
+            # When Multi-Step is enabled with Chunked-Prefill, prefills and
             # decodes are scheduled together. In the first step, all the
             # prefills turn into decodes. This update reflects that
             # conversion.
@@ -616,10 +618,19 @@ class FlashAttentionImpl(AttentionImpl):
         blocksparse_params: Optional[Dict[str, Any]] = None,
         logits_soft_cap: Optional[float] = None,
         attn_type: str = AttentionType.DECODER,
+        kv_sharing_target_layer_name: Optional[str] = None,
+        use_irope: bool = False,
     ) -> None:
+        if kv_sharing_target_layer_name is not None:
+            raise NotImplementedError("KV sharing is not supported in V0 "
+                                      "FLASH_ATTN backend.")
         if blocksparse_params is not None:
             raise ValueError(
                 "FlashAttention does not support block-sparse attention.")
+        if use_irope:
+            logger.warning(
+                "Using irope in V0 is not supported yet, it will fall back "
+                "to global attention for long context.")
         self.num_heads = num_heads
         self.head_size = head_size
         self.scale = float(scale)
@@ -632,16 +643,18 @@ class FlashAttentionImpl(AttentionImpl):
         self.kv_cache_dtype = kv_cache_dtype
         self.vllm_flash_attn_version = get_flash_attn_version(
             requires_alibi=self.alibi_slopes is not None)
-        if (is_quantized_kv_cache(self.kv_cache_dtype)
-                and self.vllm_flash_attn_version != 3):
+        if is_quantized_kv_cache(self.kv_cache_dtype) and (
+                not self.kv_cache_dtype.startswith("fp8")
+                or not flash_attn_supports_fp8()):
             raise NotImplementedError(
-                "Only FlashAttention3 supports FP8 KV cache")
+                f"FlashAttention does not support {self.kv_cache_dtype} "
+                "kv-cache on this device "
+                f"(FA supports fp8 = {flash_attn_supports_fp8()}).")
         if logits_soft_cap is None:
             # In flash-attn, setting logits_soft_cap as 0 means no soft cap.
             logits_soft_cap = 0
         self.logits_soft_cap = logits_soft_cap
 
-        assert self.num_heads % self.num_kv_heads == 0
         self.num_queries_per_kv = self.num_heads // self.num_kv_heads
 
         support_head_sizes = FlashAttentionBackend.get_supported_head_sizes()
@@ -660,6 +673,7 @@ class FlashAttentionImpl(AttentionImpl):
         kv_cache: torch.Tensor,
         attn_metadata: FlashAttentionMetadata,
         output: Optional[torch.Tensor] = None,
+        output_scale: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Forward pass with FlashAttention.
 
@@ -679,8 +693,13 @@ class FlashAttentionImpl(AttentionImpl):
         """
         assert output is not None, "Output tensor must be provided."
 
+        if output_scale is not None:
+            raise NotImplementedError(
+                "fused output quantization is not yet supported"
+                " for FlashAttentionImpl")
+
         # NOTE(woosuk): FlashAttention2 does not support FP8 KV cache.
-        if self.vllm_flash_attn_version < 3 or output.dtype != torch.bfloat16:
+        if not flash_attn_supports_fp8() or output.dtype != torch.bfloat16:
             assert (
                 layer._k_scale_float == 1.0 and layer._v_scale_float == 1.0), (
                     "key/v_scale is only supported in FlashAttention 3 with "
@@ -703,6 +722,10 @@ class FlashAttentionImpl(AttentionImpl):
         alibi_slopes: Optional[torch.Tensor] = self.alibi_slopes
         logits_soft_cap: Optional[float] = self.logits_soft_cap
         fp8_attention = kv_cache_dtype.startswith("fp8")
+
+        if fp8_attention and not flash_attn_supports_fp8():
+            raise NotImplementedError(
+                "FlashAttention does not support FP8 kv-cache on this device.")
 
         if kv_cache.numel() > 0:
             key_cache = kv_cache[0]

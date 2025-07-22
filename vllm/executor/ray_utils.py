@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import os
 import time
@@ -87,9 +88,8 @@ try:
             # TODO(swang): This is needed right now because Ray Compiled Graph
             # executes on a background thread, so we need to reset torch's
             # current device.
-            import torch
             if not self.compiled_dag_cuda_device_set:
-                torch.cuda.set_device(self.worker.device)
+                current_platform.set_device(self.worker.device)
                 self.compiled_dag_cuda_device_set = True
 
             output = self.worker._execute_model_spmd(execute_model_req,
@@ -113,8 +113,7 @@ try:
                     # Not needed
                     pass
                 else:
-                    import torch
-                    torch.cuda.set_device(self.worker.device)
+                    current_platform.set_device(self.worker.device)
 
                 self.compiled_dag_cuda_device_set = True
 
@@ -289,16 +288,14 @@ def initialize_ray_cluster(
     elif current_platform.is_rocm() or current_platform.is_xpu():
         # Try to connect existing ray instance and create a new one if not found
         try:
-            ray.init("auto", ignore_reinit_error=True)
+            ray.init("auto")
         except ConnectionError:
             logger.warning(
                 "No existing RAY instance detected. "
                 "A new instance will be launched with current node resources.")
-            ray.init(address=ray_address,
-                     ignore_reinit_error=True,
-                     num_gpus=parallel_config.world_size)
+            ray.init(address=ray_address, num_gpus=parallel_config.world_size)
     else:
-        ray.init(address=ray_address, ignore_reinit_error=True)
+        ray.init(address=ray_address)
 
     device_str = current_platform.ray_device_key
     if not device_str:
