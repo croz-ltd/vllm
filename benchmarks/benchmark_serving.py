@@ -963,7 +963,7 @@ def create_argument_parser():
         "--dataset-name",
         type=str,
         default="sharegpt",
-        choices=["sharegpt", "burstgpt", "sonnet", "random", "hf", "custom"],
+        choices=["sharegpt", "burstgpt", "sonnet", "random", "hf", "custom", "croz"],
         help="Name of the dataset to benchmark on.",
     )
     parser.add_argument(
